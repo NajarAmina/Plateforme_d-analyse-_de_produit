@@ -1,8 +1,24 @@
 const express = require('express');
 const app = express();
+const cors = require('cors');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(
+    cors({
+        origin: true,
+        credentials: true,
+    })
+);
+
+app.get('/api/health', (req, res) => {
+    res.json({
+        ok: true,
+        service: 'backend',
+        time: new Date().toISOString(),
+    });
+});
 
 // Logger simple
 app.use((req, res, next) => {
