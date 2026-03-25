@@ -17,6 +17,7 @@ const Home = () => {
   const [favorites, setFavorites] = useState([]);
   const [showProfile, setShowProfile] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false); // 🔴 NOUVEL ÉTAT POUR LA MODAL FAVORIS
+  const [showHistory, setShowHistory] = useState(false); // 🔴 NOUVEL ÉTAT POUR LA MODAL HISTORIQUE
   const [profileForm, setProfileForm] = useState({
     nom: '',
     prenom: '',
@@ -246,11 +247,46 @@ const Home = () => {
     }
   };
 
+  // 🔴 FONCTIONS POUR L'HISTORIQUE
+  const removeHistoryItem = (historyId) => {
+    const updatedHistory = searchHistory.filter((h) => h.id !== historyId);
+    setSearchHistory(updatedHistory);
+    if (user?.id) {
+      localStorage.setItem(`history_${user.id}`, JSON.stringify(updatedHistory));
+    }
+  };
+
+  const clearAllHistory = () => {
+    if (window.confirm('Êtes-vous sûr de vouloir supprimer tout votre historique ?')) {
+      setSearchHistory([]);
+      if (user?.id) {
+        localStorage.removeItem(`history_${user.id}`);
+      }
+    }
+  };
+
   const handleViewProduct = (product) => {
+    // Ajouter la "consultation" à l'historique pour que la liste s'affiche quand on clique "Historique"
+    if (product?.nom) {
+      const newSearch = {
+        id: Date.now(),
+        query: product.nom,
+        date: new Date().toISOString()
+      };
+
+      setSearchHistory((prev) => {
+        const updatedHistory = [newSearch, ...prev].slice(0, 10);
+        if (user?.id) {
+          localStorage.setItem(`history_${user.id}`, JSON.stringify(updatedHistory));
+        }
+        return updatedHistory;
+      });
+    }
+
     setSearchQuery(product.nom);
     setTimeout(() => {
-      document.getElementById('products-section')?.scrollIntoView({ 
-        behavior: 'smooth' 
+      document.getElementById('products-section')?.scrollIntoView({
+        behavior: 'smooth'
       });
     }, 100);
   };
@@ -288,7 +324,7 @@ const Home = () => {
 
   const handleHistoryClick = () => {
     if (user) {
-      document.getElementById('search-history')?.scrollIntoView({ behavior: 'smooth' });
+      setShowHistory(true);
     } else {
       alert('Veuillez vous inscrire pour accéder à l\'historique');
       navigate('/register');
@@ -519,6 +555,83 @@ const Home = () => {
                           style={styles.btnFavoriteView}
                         >
                           👁️ Voir le produit
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 🔴 MODAL HISTORIQUE - NOUVEAU */}
+      {showHistory && user && (
+        <div style={styles.modalOverlay} onClick={() => setShowHistory(false)}>
+          <div style={styles.historyModalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>📋 Mon Historique</h2>
+              <button onClick={() => setShowHistory(false)} style={styles.closeBtn}>✕</button>
+            </div>
+
+            {searchHistory.length === 0 ? (
+              <div style={styles.noHistory}>
+                <span style={styles.noHistoryIcon}>🕘</span>
+                <h3 style={styles.noHistoryTitle}>Aucun historique</h3>
+                <p style={styles.noHistoryText}>
+                  Faites une recherche ou consultez un produit pour voir l’historique ici.
+                </p>
+                <button
+                  onClick={() => {
+                    setShowHistory(false);
+                    setTimeout(() => {
+                      document.getElementById('search')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                  }}
+                  style={styles.btnBrowseProducts}
+                >
+                  🔍 Rechercher un produit
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={styles.historyHeader}>
+                  <span style={styles.historyCount}>{searchHistory.length} recherche(s)</span>
+                  <button onClick={clearAllHistory} style={styles.btnClearAll}>
+                    🗑️ Tout supprimer
+                  </button>
+                </div>
+
+                <div style={styles.historyItems}>
+                  {searchHistory.map((h) => (
+                    <div key={h.id} style={styles.historyItem}>
+                      <div style={styles.historyItemMain}>
+                        <div style={styles.historyItemQuery}>{h.query}</div>
+                        <div style={styles.historyItemDate}>
+                          {h.date ? new Date(h.date).toLocaleString('fr-FR') : ''}
+                        </div>
+                      </div>
+                      <div style={styles.historyItemActions}>
+                        <button
+                          onClick={() => {
+                            setShowHistory(false);
+                            setSearchQuery(h.query);
+                            setTimeout(() => {
+                              document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
+                            }, 100);
+                          }}
+                          style={styles.btnHistoryUse}
+                          title="Relancer la recherche"
+                        >
+                          🔍
+                        </button>
+                        <button
+                          onClick={() => removeHistoryItem(h.id)}
+                          style={styles.btnHistoryDelete}
+                          title="Supprimer"
+                        >
+                          🗑️
                         </button>
                       </div>
                     </div>
@@ -803,22 +916,6 @@ const Home = () => {
               </button>
             </div>
           )}
-          {user && searchHistory.length > 0 && (
-            <div id="search-history" style={styles.searchHistory}>
-              <h4 style={styles.historyTitle}>📋 Vos recherches récentes</h4>
-              <div style={styles.historyList}>
-                {searchHistory.slice(0, 5).map((search) => (
-                  <span
-                    key={search.id}
-                    style={styles.historyTag}
-                    onClick={() => setSearchQuery(search.query)}
-                  >
-                    {search.query}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </section>
 
@@ -1021,6 +1118,22 @@ const styles = {
   commentsModalContent: { backgroundColor: 'white', borderRadius: '1rem', padding: '2rem', width: '90%', maxWidth: '700px', maxHeight: '85vh', overflowY: 'auto' },
   // 🔴 Styles pour les favoris
   favoritesModalContent: { backgroundColor: 'white', borderRadius: '1rem', padding: '2rem', width: '90%', maxWidth: '800px', maxHeight: '85vh', overflowY: 'auto' },
+  // 🔴 Styles pour l'historique
+  historyModalContent: { backgroundColor: 'white', borderRadius: '1rem', padding: '2rem', width: '90%', maxWidth: '800px', maxHeight: '85vh', overflowY: 'auto' },
+  noHistory: { textAlign: 'center', padding: '3rem 2rem', backgroundColor: '#f9fafb', borderRadius: '1rem', border: '2px dashed #e5e7eb', marginTop: '1rem' },
+  noHistoryIcon: { fontSize: '4rem', display: 'block', marginBottom: '1rem' },
+  noHistoryTitle: { fontSize: '1.5rem', color: '#1f2937', marginBottom: '0.5rem' },
+  noHistoryText: { fontSize: '1rem', color: '#6b7280', marginBottom: '1.5rem' },
+  historyHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#f0fdf4', borderRadius: '0.5rem' },
+  historyCount: { fontSize: '1rem', fontWeight: '600', color: '#16a34a' },
+  historyItems: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
+  historyItem: { padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.75rem', border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' },
+  historyItemMain: { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1, minWidth: 0 },
+  historyItemQuery: { fontSize: '1.05rem', fontWeight: '600', color: '#1f2937', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  historyItemDate: { fontSize: '0.875rem', color: '#6b7280' },
+  historyItemActions: { display: 'flex', gap: '0.5rem' },
+  btnHistoryUse: { width: '2.5rem', height: '2.5rem', borderRadius: '0.5rem', border: '1px solid #d1d5db', backgroundColor: 'white', cursor: 'pointer', fontSize: '1rem' },
+  btnHistoryDelete: { width: '2.5rem', height: '2.5rem', borderRadius: '0.5rem', border: '1px solid #fecaca', backgroundColor: '#fef2f2', cursor: 'pointer', fontSize: '1rem' },
   noFavorites: { textAlign: 'center', padding: '3rem 2rem', backgroundColor: '#f9fafb', borderRadius: '1rem', border: '2px dashed #e5e7eb', marginTop: '1rem' },
   noFavoritesIcon: { fontSize: '4rem', display: 'block', marginBottom: '1rem' },
   noFavoritesTitle: { fontSize: '1.5rem', color: '#1f2937', marginBottom: '0.5rem' },
