@@ -606,7 +606,7 @@ const ProductsTab = () => {
                           <p style={S.meta}>📍 {p.pointsDeVente.map(pv => typeof pv === 'object' ? (pv?.nom || pv?.adresse || '') : String(pv)).filter(Boolean).join(', ')}</p>
                         )}
                         <p style={{ ...S.meta, color: '#999' }}>
-                          Soumis par : {p.createdByName || p.createdBy || 'Fournisseur'}
+                          Soumis par : {p.createdByName || (typeof p.createdBy === 'object' ? (p.createdBy?.nom || p.createdBy?.email || 'Fournisseur') : p.createdBy) || 'Fournisseur'}
                         </p>
                       </div>
                       <div style={S.cardActions}>
