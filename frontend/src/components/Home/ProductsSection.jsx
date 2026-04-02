@@ -1,4 +1,3 @@
-// src/components/ProductsSection.jsx
 import React from 'react';
 import ProductCard from './ProductCard';
 
@@ -14,7 +13,6 @@ const ProductsSection = ({
     getRiskColor = () => '#000',
     setSearchQuery = () => { }
 }) => {
-    // Sécurisation de searchQuery pour éviter l'erreur .trim()
     const safeSearchQuery = searchQuery ? searchQuery.toString() : '';
 
     return (
@@ -45,6 +43,8 @@ const ProductsSection = ({
                                 commentCount={getProductComments(produit.id_produit).length}
                                 getScoreColor={getScoreColor}
                                 getRiskColor={getRiskColor}
+                                // ✅ NOUVEAU : passer la localisation à ProductCard
+                                localisation={produit.localisation}
                             />
                         ))}
                     </div>
@@ -54,7 +54,7 @@ const ProductsSection = ({
     );
 };
 
-// ─── Styles ───────────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = {
     section: { padding: '4rem 1.5rem', backgroundColor: '#fff' },
     container: { maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem' },
@@ -65,3 +65,47 @@ const styles = {
 };
 
 export default ProductsSection;
+
+/*
+  ════════════════════════════════════════════════════════════
+  ✅ MODIFICATION À FAIRE DANS ProductCard.jsx
+  ════════════════════════════════════════════════════════════
+
+  Dans ProductCard, ajouter la prop `localisation` et afficher
+  le lien Google Maps si lat/lng sont disponibles.
+
+  Exemple — ajouter dans le JSX de ProductCard :
+
+  const ProductCard = ({ produit, localisation, ...autresProps }) => {
+
+    const mapsUrl = localisation?.lat && localisation?.lng
+      ? `https://www.google.com/maps?q=${localisation.lat},${localisation.lng}`
+      : null;
+
+    return (
+      <div style={cardStyles.card}>
+        ...votre contenu existant...
+
+        {mapsUrl && (
+          <a
+            href={mapsUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              marginTop: '10px',
+              color: '#1976D2',
+              fontSize: '13px',
+              fontWeight: 600,
+              textDecoration: 'none'
+            }}
+          >
+            🗺️ Voir le point de vente
+          </a>
+        )}
+      </div>
+    );
+  };
+*/

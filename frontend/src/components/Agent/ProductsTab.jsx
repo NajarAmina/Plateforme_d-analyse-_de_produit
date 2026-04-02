@@ -1,5 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import AddProductTab from '../Suplier/AddProductTab'; // ✅ Réutilisation du formulaire fournisseur
+
+const API_TIMEOUT_MS = 25000;
+
+/** fetch JSON avec délai max pour éviter un « Chargement... » infini si l’API ou Mongo est lent / HS */
+async function fetchJsonWithTimeout(url, options = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      /* réponse non-JSON */
+    }
+    if (!res.ok) {
+      const msg = (data && (data.message || data.error)) || `Erreur ${res.status}`;
+      throw new Error(typeof msg === 'string' ? msg : 'Réponse invalide');
+    }
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error(`Délai dépassé (${API_TIMEOUT_MS / 1000}s) — vérifiez que le backend tourne et que MongoDB répond.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // ─── Liste pays ───────────────────────────────────────────────────────────────
 const PAYS = [
@@ -26,6 +56,17 @@ const PAYS = [
   'Tunisie','Turquie','Ukraine','Uruguay','Vatican','Venezuela','Vietnam',
   'Yémen','Zambie','Zimbabwe'
 ];
+
+// ✅ Helper : lien Google Maps depuis localisation
+const MapsLink = ({ localisation }) => {
+  if (!localisation?.lat || !localisation?.lng) return null;
+  const url = `https://www.google.com/maps?q=${localisation.lat},${localisation.lng}`;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" style={S.mapsLink}>
+      🗺️ Voir sur Google Maps
+    </a>
+  );
+};
 
 // ─── Autocomplete générique ───────────────────────────────────────────────────
 const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => {
@@ -55,7 +96,7 @@ const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => 
       setOpen(filtered.length > 0);
     } else if (fetchFn) {
       setLoading(true);
-      try {
+      try { 
         const results = await fetchFn(val);
         setSuggestions(results);
         setOpen(results.length > 0);
@@ -65,18 +106,13 @@ const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => 
 
   const handleInput = (e) => {
     const val = e.target.value;
-    setQuery(val);
-    onChange(val);
-    setHighlighted(-1);
+    setQuery(val); onChange(val); setHighlighted(-1);
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => search(val), 350);
   };
 
   const handleSelect = (item) => {
-    setQuery(item.label);
-    onChange(item.value);
-    setSuggestions([]);
-    setOpen(false);
+    setQuery(item.label); onChange(item.value); setSuggestions([]); setOpen(false);
   };
 
   const handleKeyDown = (e) => {
@@ -91,14 +127,10 @@ const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => 
     <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
       <div style={{ position: 'relative' }}>
         <input
-          type="text"
-          placeholder={placeholder}
-          value={query}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
+          type="text" placeholder={placeholder} value={query}
+          onChange={handleInput} onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setOpen(true)}
-          style={S.input}
-          autoComplete="off"
+          style={S.input} autoComplete="off"
         />
         {loading && <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: '#999' }}>⏳</span>}
       </div>
@@ -109,10 +141,7 @@ const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => 
             const main = parts[0];
             const sub = parts.slice(1).join(', ');
             return (
-              <li
-                key={i}
-                onMouseDown={() => handleSelect(item)}
-                onMouseEnter={() => setHighlighted(i)}
+              <li key={i} onMouseDown={() => handleSelect(item)} onMouseEnter={() => setHighlighted(i)}
                 style={{ ...S.dropdownItem, ...(i === highlighted ? S.dropdownItemHL : {}) }}
               >
                 {staticList ? (
@@ -122,8 +151,8 @@ const Autocomplete = ({ value, onChange, placeholder, fetchFn, staticList }) => 
                   </>
                 ) : (
                   <>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>📍 {main}</div>
-                    {sub && <div style={{ fontSize: 11, color: '#888' }}>{sub}</div>}
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>📍 {parts[0]}</div>
+                    {parts.slice(1).join(', ') && <div style={{ fontSize: 11, color: '#888' }}>{parts.slice(1).join(', ')}</div>}
                   </>
                 )}
               </li>
@@ -146,7 +175,7 @@ const fetchAdresseTunisie = async (val) => {
   });
 };
 
-// ─── Notification helper ──────────────────────────────────────────────────────
+// ─── Notification ─────────────────────────────────────────────────────────────
 const sendNotification = async ({ recipientId, message, productName, agentName }) => {
   try {
     await fetch('/api/notifications', {
@@ -154,9 +183,7 @@ const sendNotification = async ({ recipientId, message, productName, agentName }
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipientId, message, productName, agentName, date: new Date().toISOString() })
     });
-  } catch (err) {
-    console.error('Erreur notification:', err);
-  }
+  } catch (err) { console.error('Erreur notification:', err); }
 };
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -166,10 +193,8 @@ const Toast = ({ toasts }) => (
       <div key={t.id} style={{
         padding: '12px 20px', borderRadius: 8, color: '#fff', fontWeight: 600, fontSize: 14,
         backgroundColor: t.type === 'success' ? '#4CAF50' : t.type === 'error' ? '#f44336' : '#1976D2',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.2)', animation: 'fadeIn .3s ease'
-      }}>
-        {t.msg}
-      </div>
+        boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+      }}>{t.msg}</div>
     ))}
   </div>
 );
@@ -190,7 +215,7 @@ const ConfirmModal = ({ open, message, onConfirm, onCancel }) => {
   );
 };
 
-// ─── Formulaire produit (ajout ou édition) ────────────────────────────────────
+// ─── Formulaire produit ───────────────────────────────────────────────────────
 const ProductForm = ({ form, setForm, pointsDeVente, onSubmit, onCancel, submitLabel }) => {
   const readFile = (file) => new Promise((res, rej) => {
     const r = new FileReader();
@@ -202,67 +227,37 @@ const ProductForm = ({ form, setForm, pointsDeVente, onSubmit, onCancel, submitL
   return (
     <div style={S.formCard}>
       <div style={S.formGrid}>
-        <input
-          placeholder="Nom du produit *"
-          value={form.nom}
-          onChange={e => setForm({ ...form, nom: e.target.value })}
-          style={S.input}
-        />
-        <input
-          placeholder="Code-barre *"
-          value={form.code_barre}
-          onChange={e => setForm({ ...form, code_barre: e.target.value })}
-          style={S.input}
-        />
+        <input placeholder="Nom du produit *" value={form.nom}
+          onChange={e => setForm({ ...form, nom: e.target.value })} style={S.input} />
+        <input placeholder="Code-barre *" value={form.code_barre}
+          onChange={e => setForm({ ...form, code_barre: e.target.value })} style={S.input} />
       </div>
 
-      <Autocomplete
-        value={form.origine}
-        onChange={val => setForm({ ...form, origine: val })}
-        placeholder="Origine (pays) *"
-        staticList={PAYS}
-      />
+      <Autocomplete value={form.origine} onChange={val => setForm({ ...form, origine: val })}
+        placeholder="Origine (pays) *" staticList={PAYS} />
 
-      <textarea
-        placeholder="Description *"
-        value={form.description}
+      <textarea placeholder="Description *" value={form.description}
         onChange={e => setForm({ ...form, description: e.target.value })}
-        style={{ ...S.input, minHeight: 80, resize: 'vertical' }}
-      />
-      <textarea
-        placeholder="Ingrédients"
-        value={form.ingredients}
+        style={{ ...S.input, minHeight: 80, resize: 'vertical' }} />
+      <textarea placeholder="Ingrédients" value={form.ingredients}
         onChange={e => setForm({ ...form, ingredients: e.target.value })}
-        style={{ ...S.input, minHeight: 60, resize: 'vertical' }}
-      />
+        style={{ ...S.input, minHeight: 60, resize: 'vertical' }} />
 
-      {/* Image */}
-      <input
-        type="file"
-        accept="image/*"
+      <input type="file" accept="image/*"
         onChange={async e => {
           const file = e.target.files?.[0];
           if (!file) return;
           try { setForm({ ...form, image: await readFile(file) }); }
-          catch { alert('Impossible de lire l\'image'); }
-        }}
-        style={S.input}
-      />
-      {form.image && (
-        <img src={form.image} alt="Preview" style={{ maxWidth: 180, borderRadius: 8, marginTop: 6 }} />
-      )}
+          catch { alert("Impossible de lire l'image"); }
+        }} style={S.input} />
+      {form.image && <img src={form.image} alt="Preview" style={{ maxWidth: 180, borderRadius: 8, marginTop: 6 }} />}
 
-      {/* Points de vente */}
-      <label style={{ fontSize: 13, color: '#555', marginBottom: 2 }}>Points de vente</label>
-      <select
-        multiple
-        value={form.pointsDeVente || []}
+      <label style={{ fontSize: 13, color: '#555' }}>Points de vente</label>
+      <select multiple value={form.pointsDeVente || []}
         onChange={e => {
           const selected = Array.from(e.target.selectedOptions).map(o => o.value);
           setForm({ ...form, pointsDeVente: selected });
-        }}
-        style={{ ...S.input, minHeight: 90 }}
-      >
+        }} style={{ ...S.input, minHeight: 90 }}>
         {pointsDeVente.map(pv => (
           <option key={pv._id} value={pv._id}>{pv.nom} — {pv.adresse}</option>
         ))}
@@ -285,8 +280,7 @@ const ProductsTab = () => {
   const [pendingProducts, setPendingProducts] = useState([]);
   const [pointsDeVente, setPointsDeVente] = useState([]);
 
-  // UI
-  const [activeTab, setActiveTab] = useState('approved'); // 'approved' | 'pending' | 'add' | 'points'
+  const [activeTab, setActiveTab] = useState('approved');
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -302,17 +296,35 @@ const ProductsTab = () => {
 
   const loadAll = async () => {
     setLoadingProducts(true);
+    const labels = ['Produits validés', 'Produits en attente', 'Points de vente'];
     try {
-      const [r1, r2, r3] = await Promise.all([
-        fetch('/api/produits?status=approved'),
-        fetch('/api/produits/pending'),
-        fetch('/api/pointDeVente')
+      const settled = await Promise.allSettled([
+        fetchJsonWithTimeout('/api/produits?status=approved'),
+        fetchJsonWithTimeout('/api/produits/pending'),
+        fetchJsonWithTimeout('/api/pointDeVente'),
       ]);
-      const [d1, d2, d3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
-      setProducts(Array.isArray(d1) ? d1 : []);
-      setPendingProducts(Array.isArray(d2) ? d2 : []);
-      setPointsDeVente(Array.isArray(d3) ? d3 : []);
-    } finally { setLoadingProducts(false); }
+      const failed = [];
+      const unwrap = (i, setter) => {
+        const r = settled[i];
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          setter(r.value);
+          return;
+        }
+        setter([]);
+        if (r.status === 'rejected') failed.push(`${labels[i]} : ${r.reason?.message || r.reason}`);
+        else if (r.status === 'fulfilled') failed.push(`${labels[i]} : réponse inattendue`);
+      };
+      unwrap(0, setProducts);
+      unwrap(1, setPendingProducts);
+      unwrap(2, setPointsDeVente);
+      if (failed.length === settled.length) {
+        toast(failed[0] || 'Impossible de charger les données.', 'error');
+      } else if (failed.length > 0) {
+        toast(`Certaines listes n’ont pas pu être chargées. ${failed.join(' · ')}`, 'error');
+      }
+    } finally {
+      setLoadingProducts(false);
+    }
   };
 
   // ── Toast ──
@@ -374,17 +386,14 @@ const ProductsTab = () => {
   const startEdit = (p) => {
     setEditingProductId(p._id);
     setProductForm({
-      nom: p.nom || '',
-      description: p.description || '',
-      code_barre: p.code_barre || '',
+      nom: p.nom || '', description: p.description || '', code_barre: p.code_barre || '',
       origine: p.origine || '',
       ingredients: Array.isArray(p.ingredients)
         ? p.ingredients.map(i => i?.nom || i).filter(Boolean).join(', ')
         : (p.ingredients || ''),
       image: p.image || '',
       pointsDeVente: Array.isArray(p.pointsDeVente)
-        ? p.pointsDeVente.map(pv => pv?._id || pv).filter(Boolean)
-        : []
+        ? p.pointsDeVente.map(pv => pv?._id || pv).filter(Boolean) : []
     });
     setActiveTab('approved');
   };
@@ -401,15 +410,12 @@ const ProductsTab = () => {
       // Notification si produit créé par un fournisseur (différent de l'agent)
       if (product.createdBy && product.createdBy !== user?.id) {
         await sendNotification({
-          recipientId: product.createdBy,
-          productName: product.nom,
+          recipientId: product.createdBy, productName: product.nom,
           agentName: user?.name || 'Un agent',
           message: `✏️ Votre produit "${product.nom}" a été modifié par l'agent ${user?.name || ''}.`
         });
       }
-
-      setEditingProductId(null);
-      setProductForm(emptyForm);
+      setEditingProductId(null); setProductForm(emptyForm);
       await loadAll();
       toast(`Produit "${product.nom}" modifié ✅`);
     } catch (err) { toast(err.message, 'error'); }
@@ -421,22 +427,17 @@ const ProductsTab = () => {
     if (!ok) return;
     try {
       const res = await fetch(`/api/produits/${product._id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deletedBy: user?.id })
       });
       if (!res.ok) throw new Error('Erreur suppression produit');
-
-      // Notification fournisseur
       if (product.createdBy && product.createdBy !== user?.id) {
         await sendNotification({
-          recipientId: product.createdBy,
-          productName: product.nom,
+          recipientId: product.createdBy, productName: product.nom,
           agentName: user?.name || 'Un agent',
           message: `🗑️ Votre produit "${product.nom}" a été supprimé par l'agent ${user?.name || ''}.`
         });
       }
-
       await loadAll();
       toast(`Produit "${product.nom}" supprimé`, 'info');
     } catch (err) { toast(err.message, 'error'); }
@@ -448,19 +449,16 @@ const ProductsTab = () => {
     if (!ok) return;
     try {
       const res = await fetch(`/api/produits/${product._id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deletedBy: user?.id, reason: 'refused' })
       });
       if (!res.ok) throw new Error('Erreur refus produit');
 
       await sendNotification({
-        recipientId: product.createdBy,
-        productName: product.nom,
+        recipientId: product.createdBy, productName: product.nom,
         agentName: user?.name || 'Un agent',
         message: `❌ Votre produit "${product.nom}" a été refusé par l'agent ${user?.name || ''}.`
       });
-
       await loadAll();
       toast(`Produit "${product.nom}" refusé`, 'info');
     } catch (err) { toast(err.message, 'error'); }
@@ -468,13 +466,10 @@ const ProductsTab = () => {
 
   // ── Points de vente ──
   const handleAddPoint = async () => {
-    if (!newPoint.nom.trim() || !newPoint.adresse.trim()) {
-      toast('Nom et adresse requis', 'error'); return;
-    }
+    if (!newPoint.nom.trim() || !newPoint.adresse.trim()) { toast('Nom et adresse requis', 'error'); return; }
     try {
       const res = await fetch('/api/pointDeVente', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPoint)
       });
       if (!res.ok) throw new Error('Erreur ajout point de vente');
@@ -500,12 +495,8 @@ const ProductsTab = () => {
     <div style={S.page}>
       <style>{`@keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }`}</style>
       <Toast toasts={toasts} />
-      <ConfirmModal
-        open={confirm.open}
-        message={confirm.message}
-        onConfirm={confirm.onConfirm}
-        onCancel={() => setConfirm(c => ({ ...c, open: false }))}
-      />
+      <ConfirmModal open={confirm.open} message={confirm.message}
+        onConfirm={confirm.onConfirm} onCancel={() => setConfirm(c => ({ ...c, open: false }))} />
 
       <h2 style={S.pageTitle}>📦 Gérer les Produits</h2>
 
@@ -517,153 +508,144 @@ const ProductsTab = () => {
           { key: 'add', label: '➕ Nouveau produit' },
           { key: 'points', label: `📍 Points de vente (${pointsDeVente.length})` },
         ].map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => { setActiveTab(tab.key); setEditingProductId(null); }}
-            style={{ ...S.tab, ...(activeTab === tab.key ? S.tabActive : {}), ...(tab.badge ? S.tabBadge : {}) }}
-          >
+          <button key={tab.key} onClick={() => { setActiveTab(tab.key); setEditingProductId(null); }}
+            style={{ ...S.tab, ...(activeTab === tab.key ? S.tabActive : {}), ...(tab.badge ? S.tabBadge : {}) }}>
             {tab.label}
           </button>
         ))}
       </div>
 
-      {loadingProducts ? (
-        <div style={S.loading}>Chargement...</div>
-      ) : (
+      {loadingProducts ? <div style={S.loading}>Chargement...</div> : (
         <>
-          {/* ── Onglet : Produits validés ── */}
+          {/* ── Produits validés ── */}
           {activeTab === 'approved' && (
             <div>
-              {products.length === 0 ? (
-                <p style={S.empty}>Aucun produit validé.</p>
-              ) : (
-                products.map(p => (
-                  <div key={p._id} style={S.card}>
-                    {editingProductId === p._id ? (
-                      <>
-                        <h4 style={S.cardTitle}>✏️ Modifier : {p.nom}</h4>
-                        <ProductForm
-                          form={productForm}
-                          setForm={setProductForm}
-                          pointsDeVente={pointsDeVente}
-                          onSubmit={() => saveEdit(p)}
-                          onCancel={() => { setEditingProductId(null); setProductForm(emptyForm); }}
-                          submitLabel="💾 Enregistrer"
-                        />
-                      </>
-                    ) : (
-                      <div style={S.cardRow}>
-                        {p.image && <img src={p.image} alt={p.nom} style={S.productImg} />}
-                        <div style={{ flex: 1 }}>
-                          <div style={S.cardHeader}>
-                            <h3 style={S.cardTitle}>{p.nom}</h3>
-                            {p.origine && <span style={S.badge}>{p.origine}</span>}
-                          </div>
-                          <p style={S.cardDesc}>{p.description}</p>
-                          {p.code_barre && <p style={S.meta}>🔖 {p.code_barre}</p>}
-                          {p.pointsDeVente?.length > 0 && (
-                            <p style={S.meta}>📍 {p.pointsDeVente.map(pv => typeof pv === 'object' ? (pv?.nom || pv?.adresse || '') : String(pv)).filter(Boolean).join(', ')}</p>
-                          )}
-                        </div>
-                        <div style={S.cardActions}>
-                          <button onClick={() => startEdit(p)} style={S.btnEdit}>✏️ Modifier</button>
-                          <button onClick={() => deleteProduct(p)} style={S.btnDanger}>🗑️ Supprimer</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* ── Onglet : En attente ── */}
-          {activeTab === 'pending' && (
-            <div>
-              {pendingProducts.length === 0 ? (
-                <p style={S.empty}>Aucun produit en attente de validation.</p>
-              ) : (
-                pendingProducts.map(p => (
-                  <div key={p._id} style={{ ...S.card, borderLeft: '4px solid #FF9800' }}>
+              {products.length === 0 ? <p style={S.empty}>Aucun produit validé.</p> : products.map(p => (
+                <div key={p._id} style={S.card}>
+                  {editingProductId === p._id ? (
+                    <>
+                      <h4 style={S.cardTitle}>✏️ Modifier : {p.nom}</h4>
+                      <ProductForm form={productForm} setForm={setProductForm} pointsDeVente={pointsDeVente}
+                        onSubmit={() => saveEdit(p)}
+                        onCancel={() => { setEditingProductId(null); setProductForm(emptyForm); }}
+                        submitLabel="💾 Enregistrer" />
+                    </>
+                  ) : (
                     <div style={S.cardRow}>
                       {p.image && <img src={p.image} alt={p.nom} style={S.productImg} />}
                       <div style={{ flex: 1 }}>
                         <div style={S.cardHeader}>
                           <h3 style={S.cardTitle}>{p.nom}</h3>
-                          <span style={{ ...S.badge, backgroundColor: '#FFF3E0', color: '#E65100' }}>En attente</span>
+                          {p.origine && <span style={S.badge}>{p.origine}</span>}
                         </div>
                         <p style={S.cardDesc}>{p.description}</p>
                         {p.code_barre && <p style={S.meta}>🔖 {p.code_barre}</p>}
-                        {p.origine && <p style={S.meta}>🌍 {String(p.origine)}</p>}
-                        {p.ingredients && (
-                          <p style={S.meta}>🧪 {
-                            Array.isArray(p.ingredients)
-                              ? p.ingredients.map(i => typeof i === 'object' ? (i?.nom || '') : String(i)).filter(Boolean).join(', ')
-                              : String(p.ingredients)
-                          }</p>
-                        )}
                         {p.pointsDeVente?.length > 0 && (
-                          <p style={S.meta}>📍 {p.pointsDeVente.map(pv => typeof pv === 'object' ? (pv?.nom || pv?.adresse || '') : String(pv)).filter(Boolean).join(', ')}</p>
+                          <p style={S.meta}>
+                            📍 {p.pointsDeVente.map(pv => typeof pv === 'object' ? (pv?.nom || pv?.adresse || '') : String(pv)).filter(Boolean).join(', ')}
+                          </p>
                         )}
-                        <p style={{ ...S.meta, color: '#999' }}>
-                          Soumis par : {p.createdByName || (typeof p.createdBy === 'object' ? (p.createdBy?.nom || p.createdBy?.email || 'Fournisseur') : p.createdBy) || 'Fournisseur'}
-                        </p>
+                        {/* ✅ NOUVEAU : lien Google Maps */}
+                        <MapsLink localisation={p.localisation} />
                       </div>
                       <div style={S.cardActions}>
-                        <button onClick={() => acceptProduct(p)} style={S.btnSuccess}>✅ Accepter</button>
-                        <button onClick={() => refuseProduct(p)} style={S.btnDanger}>❌ Refuser</button>
+                        <button onClick={() => startEdit(p)} style={S.btnEdit}>✏️ Modifier</button>
+                        <button onClick={() => deleteProduct(p)} style={S.btnDanger}>🗑️ Supprimer</button>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
-          {/* ── Onglet : Ajouter produit ── */}
-          {activeTab === 'add' && (
+          {/* ── En attente ── */}
+          {activeTab === 'pending' && (
             <div>
-              <h3 style={S.sectionTitle}>Nouveau produit</h3>
-              <ProductForm
-                form={newProductForm}
-                setForm={setNewProductForm}
-                pointsDeVente={pointsDeVente}
-                onSubmit={handleAddProduct}
-                onCancel={() => setNewProductForm(emptyForm)}
-                submitLabel="➕ Ajouter le produit"
-              />
+              {pendingProducts.length === 0 ? <p style={S.empty}>Aucun produit en attente.</p> : pendingProducts.map(p => (
+                <div key={p._id} style={{ ...S.card, borderLeft: '4px solid #FF9800' }}>
+                  <div style={S.cardRow}>
+                    {p.image && <img src={p.image} alt={p.nom} style={S.productImg} />}
+                    <div style={{ flex: 1 }}>
+                      <div style={S.cardHeader}>
+                        <h3 style={S.cardTitle}>{p.nom}</h3>
+                        <span style={{ ...S.badge, backgroundColor: '#FFF3E0', color: '#E65100' }}>En attente</span>
+                      </div>
+                      <p style={S.cardDesc}>{p.description}</p>
+                      {p.code_barre && <p style={S.meta}>🔖 {p.code_barre}</p>}
+                      {p.origine && <p style={S.meta}>🌍 {String(p.origine)}</p>}
+                      {p.ingredients && (
+                        <p style={S.meta}>🧪 {
+                          Array.isArray(p.ingredients)
+                            ? p.ingredients.map(i => typeof i === 'object' ? (i?.nom || '') : String(i)).filter(Boolean).join(', ')
+                            : String(p.ingredients)
+                        }</p>
+                      )}
+                      {p.pointsDeVente?.length > 0 && (
+                        <p style={S.meta}>
+                          📍 {p.pointsDeVente.map(pv => typeof pv === 'object' ? (pv?.nom || pv?.adresse || '') : String(pv)).filter(Boolean).join(', ')}
+                        </p>
+                      )}
+                      {/* ✅ NOUVEAU : lien Google Maps pour l'agent (aide à vérifier le point de vente) */}
+                      {p.localisation?.lat && p.localisation?.lng && (
+                        <div style={S.mapsBox}>
+                          <span style={{ fontSize: 12, color: '#555', marginRight: 6 }}>📌 Point de vente :</span>
+                          {p.localisation.adresse && (
+                            <span style={{ fontSize: 12, color: '#333', marginRight: 8 }}>{p.localisation.adresse}</span>
+                          )}
+                          <MapsLink localisation={p.localisation} />
+                        </div>
+                      )}
+                      <p style={{ ...S.meta, color: '#999' }}>
+                        Soumis par : {p.createdByName || (typeof p.createdBy === 'object' ? (p.createdBy?.nom || p.createdBy?.email || 'Fournisseur') : p.createdBy) || 'Fournisseur'}
+                      </p>
+                    </div>
+                    <div style={S.cardActions}>
+                      <button onClick={() => acceptProduct(p)} style={S.btnSuccess}>✅ Accepter</button>
+                      <button onClick={() => refuseProduct(p)} style={S.btnDanger}>❌ Refuser</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
-          {/* ── Onglet : Points de vente ── */}
+          {/* ── Ajouter produit ── */}
+          {/* ── Ajouter produit : réutilise AddProductTab du fournisseur ── */}
+          {activeTab === 'add' && (
+            <AddProductTab
+              user={user}
+              directApprove={true}
+              onSuccess={() => { loadAll(); setActiveTab('approved'); toast('Produit ajouté et publié ✅'); }}
+            />
+          )}
+
+          {/* ── Points de vente ── */}
           {activeTab === 'points' && (
             <div>
               <h3 style={S.sectionTitle}>Ajouter un point de vente</h3>
               <div style={S.pointForm}>
-                <input
-                  placeholder="Nom du point de vente"
-                  value={newPoint.nom}
-                  onChange={e => setNewPoint({ ...newPoint, nom: e.target.value })}
-                  style={S.input}
-                />
-                <Autocomplete
-                  value={newPoint.adresse}
-                  onChange={val => setNewPoint({ ...newPoint, adresse: val })}
-                  placeholder="Adresse en Tunisie 📍"
-                  fetchFn={fetchAdresseTunisie}
-                />
+                <input placeholder="Nom du point de vente" value={newPoint.nom}
+                  onChange={e => setNewPoint({ ...newPoint, nom: e.target.value })} style={S.input} />
+                <Autocomplete value={newPoint.adresse} onChange={val => setNewPoint({ ...newPoint, adresse: val })}
+                  placeholder="Adresse en Tunisie 📍" fetchFn={fetchAdresseTunisie} />
                 <button onClick={handleAddPoint} style={S.btnSuccess}>+ Ajouter</button>
               </div>
 
               <h3 style={{ ...S.sectionTitle, marginTop: 24 }}>Liste des points de vente</h3>
-              {pointsDeVente.length === 0 ? (
-                <p style={S.empty}>Aucun point de vente.</p>
-              ) : (
+              {pointsDeVente.length === 0 ? <p style={S.empty}>Aucun point de vente.</p> : (
                 pointsDeVente.map(pv => (
                   <div key={pv._id} style={S.pointCard}>
                     <div>
                       <strong>{pv.nom}</strong>
                       <p style={{ margin: '2px 0 0', fontSize: 13, color: '#666' }}>📍 {pv.adresse}</p>
+                      {/* ✅ NOUVEAU : lien Maps dans la liste des points de vente */}
+                      {pv.lat && pv.lng && (
+                        <a href={`https://www.google.com/maps?q=${pv.lat},${pv.lng}`}
+                          target="_blank" rel="noreferrer" style={S.mapsLink}>
+                          🗺️ Voir sur Google Maps
+                        </a>
+                      )}
                     </div>
                     <button onClick={() => handleDeletePoint(pv)} style={S.btnDangerSm}>🗑️</button>
                   </div>
@@ -705,6 +687,9 @@ const S = {
   dropdownItemHL: { backgroundColor: '#E3F2FD', color: '#1976D2' },
   pointForm: { display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, alignItems: 'start', marginBottom: 12 },
   pointCard: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', padding: '10px 14px', marginBottom: 8, borderRadius: 8, border: '1px solid #e5e7eb' },
+  // ✅ Styles liens Maps
+  mapsLink: { display: 'inline-block', color: '#1976D2', fontSize: 12, fontWeight: 600, textDecoration: 'none', marginTop: 4 },
+  mapsBox: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 4, padding: '6px 10px', backgroundColor: '#E3F2FD', borderRadius: 6 },
   btnSuccess: { backgroundColor: '#4CAF50', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
   btnEdit: { backgroundColor: '#1976D2', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
   btnDanger: { backgroundColor: '#f44336', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },

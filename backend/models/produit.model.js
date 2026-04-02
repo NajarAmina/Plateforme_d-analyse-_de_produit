@@ -16,7 +16,6 @@ const produitSchema = new mongoose.Schema({
         unique: true,
         sparse: true
     },
-    // Compatibilité avec ancien schéma/index Mongo (codeBarres_1)
     codeBarres: {
         type: String,
         unique: true,
@@ -33,7 +32,13 @@ const produitSchema = new mongoose.Schema({
         type: String
     },
 
-    // 🔴 Workflow de validation (fournisseur -> admin)
+    // ✅ NOUVEAU : Localisation du point de vente principal
+    localisation: {
+        adresse: { type: String, default: '' },
+        lat:     { type: Number, default: null },
+        lng:     { type: Number, default: null }
+    },
+
     status: {
         type: String,
         enum: ['pending', 'approved', 'rejected'],

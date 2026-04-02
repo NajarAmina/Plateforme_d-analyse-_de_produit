@@ -20,7 +20,7 @@ const HeroSection = () => (
                 >
                     Commencer
                 </button>
-                <button style={styles.btnSecondary}>En savoir plus</button>
+                
             </div>
         </div>
     </section>
