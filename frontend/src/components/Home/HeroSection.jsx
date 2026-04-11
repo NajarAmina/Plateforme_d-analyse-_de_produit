@@ -1,72 +1,166 @@
 // src/components/Home/HeroSection.jsx
-import React from 'react';
+import React, { useState } from 'react';
 
-const HeroSection = ({ searchQuery, setSearchQuery, handleSearch, displayProducts }) => (
-    <section style={styles.hero}>
-        {/* Overlay sombre pour lisibilité */}
-        <div style={styles.overlay} />
+const SEARCH_TYPES = [
+    { value: 'produit', label: 'Produit', placeholder: 'Tapez le nom du produit ' },
+    { value: 'ingredient', label: 'Ingrédient', placeholder: 'Tapez le nom d\'un ingrédient ' },
+];
 
-        <div style={styles.heroContent}>
-            {/* ── Barre de recherche EN HAUT ── */}
-            <div style={styles.searchWrapper}>
-                <form 
-                    onSubmit={(e) => {
-                        handleSearch(e);
-                        // On scroll directement vers la section des résultats
-                        if (searchQuery.trim()) {
-                            setTimeout(() => {
-                                document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
-                            }, 100);
-                        }
-                    }} 
-                    style={styles.searchBox}
-                >
-                    <span style={styles.searchIcon}>🔍</span>
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Nom du produit (ex: Lait, Pommes, Pain...)"
-                        style={styles.searchInput}
-                    />
-                    {searchQuery.trim() && (
-                        <button
-                            type="button"
-                            onClick={() => setSearchQuery('')}
-                            style={styles.clearBtn}
-                        >
-                            ✕
-                        </button>
-                    )}
-                    <button type="submit" style={styles.searchBtn}>
-                        Rechercher
-                    </button>
-                </form>
-            </div>
+const HeroSection = ({
+    searchQuery,
+    setSearchQuery,
+    handleSearch,
+    handleSearchResults,
+    handleIngredientAnalysis,
+}) => {
+    const [searchType, setSearchType] = useState('produit');
+    const [isLoading, setIsLoading] = useState(false);
+    const [searchError, setSearchError] = useState('');
 
-            {/* ── Titre & sous-titre ── */}
-            <h1 style={styles.heroTitle}>
-                Analysez vos produits{' '}
-                <span style={styles.highlight}>en un scan</span>
-            </h1>
-            <p style={styles.heroSubtitle}>
-                Découvrez la composition de vos aliments et faites des choix éclairés
-                pour votre santé et l'environnement.
-            </p>
+    const currentType = SEARCH_TYPES.find(t => t.value === searchType);
 
-            <div style={styles.heroButtons}>
-                <button
-                    style={styles.btnPrimary}
-                    onClick={() =>
-                        document.getElementById('scanner')?.scrollIntoView({ behavior: 'smooth' })
+    const runSearch = async (e) => {
+        e.preventDefault();
+        const query = searchQuery.trim();
+        if (!query) return;
+
+        setSearchError('');
+        setIsLoading(true);
+
+        try {
+            if (searchType === 'ingredient') {
+                // ── Recherche par ingrédient : appelle l'analyse de l'ingrédient ──
+                const res = await fetch(
+                    `http://localhost:5000/api/analyses/search/ingredient?q=${encodeURIComponent(query)}`
+                );
+                const data = await res.json();
+
+                if (!res.ok || !data.results || data.results.length === 0) {
+                    setSearchError(data.message || 'Aucun ingrédient trouvé.');
+                } else {
+                    // Passer les résultats au parent pour affichage modal ingrédient
+                    if (typeof handleIngredientAnalysis === 'function') {
+                        handleIngredientAnalysis(data.results, query);
                     }
-                >
-                    Commencer
-                </button>
+                }
+            } else {
+                // ── Recherche par nom de produit ──
+                const res = await fetch(
+                    `http://localhost:5000/api/analyses/search/produit?q=${encodeURIComponent(query)}`
+                );
+                const data = await res.json();
+
+                if (!res.ok || !data.results || data.results.length === 0) {
+                    setSearchError(data.message || 'Aucun produit trouvé.');
+                    // Fallback recherche locale
+                    handleSearch(e);
+                } else {
+                    if (typeof handleSearchResults === 'function') {
+                        handleSearchResults(data.results);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[HeroSection search error]', err);
+            setSearchError('Erreur réseau. Recherche locale en cours…');
+            handleSearch(e);
+        } finally {
+            setIsLoading(false);
+            setTimeout(() => {
+                document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
+            }, 150);
+        }
+    };
+
+    return (
+        <section style={styles.hero}>
+            <div style={styles.overlay} />
+
+            <div style={styles.heroContent}>
+                {/* ── Barre de recherche ── */}
+                <div style={styles.searchWrapper}>
+
+                    {/* Sélecteur de type */}
+                    <div style={styles.typeSelector}>
+                        {SEARCH_TYPES.map((type) => (
+                            <button
+                                key={type.value}
+                                type="button"
+                                onClick={() => {
+                                    setSearchType(type.value);
+                                    setSearchError('');
+                                }}
+                                style={{
+                                    ...styles.typeBtn,
+                                    ...(searchType === type.value ? styles.typeBtnActive : {})
+                                }}
+                            >
+                                {type.value === 'produit'} {type.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Champ de saisie */}
+                    <form onSubmit={runSearch} style={styles.searchBox}>
+                        <span style={styles.searchIcon}>🔍</span>
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => {
+                                setSearchQuery(e.target.value);
+                                setSearchError('');
+                            }}
+                            placeholder={currentType.placeholder}
+                            style={styles.searchInput}
+                            disabled={isLoading}
+                        />
+                        {searchQuery.trim() && !isLoading && (
+                            <button
+                                type="button"
+                                onClick={() => { setSearchQuery(''); setSearchError(''); }}
+                                style={styles.clearBtn}
+                            >
+                                ✕
+                            </button>
+                        )}
+                        <button
+                            type="submit"
+                            style={{ ...styles.searchBtn, opacity: isLoading ? 0.7 : 1 }}
+                            disabled={isLoading}
+                        >
+                            {isLoading ? '…' : 'Rechercher'}
+                        </button>
+                    </form>
+
+                    {searchError && (
+                        <p style={styles.searchError}>{searchError}</p>
+                    )}
+                </div>
+
+                {/* ── Titre & sous-titre ── */}
+                <h1 style={styles.heroTitle}>
+                    Analysez vos produits{' '}
+                    <span style={styles.highlight}>en un scan</span>
+                </h1>
+                <p style={styles.heroSubtitle}>
+                    Découvrez la composition de vos aliments et faites des choix éclairés
+                    pour votre santé et l'environnement.
+                </p>
+
+                <div style={styles.heroButtons}>
+                    <button
+                        style={styles.btnPrimary}
+                        onClick={() =>
+                            document.getElementById('scanner')?.scrollIntoView({ behavior: 'smooth' })
+                        }
+                    >
+                        Commencer
+                    </button>
+                </div>
             </div>
-        </div>
-    </section>
-);
+        </section>
+    );
+};
 
 const styles = {
     hero: {
@@ -95,14 +189,33 @@ const styles = {
         alignItems: 'center',
         textAlign: 'center',
         width: '100%',
-        maxWidth: '800px',
+        maxWidth: '820px',
         padding: '0 1.5rem',
         gap: '1.25rem',
     },
-
-    /* ── Search bar ── */
-    searchWrapper: {
-        width: '100%',
+    searchWrapper: { width: '100%' },
+    typeSelector: {
+        display: 'flex',
+        justifyContent: 'center',
+        gap: '0.5rem',
+        marginBottom: '0.6rem',
+    },
+    typeBtn: {
+        padding: '0.4rem 1.1rem',
+        borderRadius: '2rem',
+        border: '1.5px solid rgba(255,255,255,0.5)',
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        color: 'white',
+        cursor: 'pointer',
+        fontSize: '0.88rem',
+        fontWeight: '500',
+        backdropFilter: 'blur(4px)',
+        transition: 'all 0.2s ease',
+    },
+    typeBtnActive: {
+        backgroundColor: '#16a34a',
+        border: '1.5px solid #16a34a',
+        boxShadow: '0 4px 12px rgba(22,163,74,0.4)',
     },
     searchBox: {
         display: 'flex',
@@ -114,10 +227,7 @@ const styles = {
         boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
         width: '100%',
     },
-    searchIcon: {
-        fontSize: '1.1rem',
-        flexShrink: 0,
-    },
+    searchIcon: { fontSize: '1.1rem', flexShrink: 0 },
     searchInput: {
         flex: 1,
         border: 'none',
@@ -147,14 +257,14 @@ const styles = {
         fontSize: '0.95rem',
         flexShrink: 0,
         whiteSpace: 'nowrap',
+        transition: 'opacity 0.2s',
     },
-    searchMeta: {
-        marginTop: '0.6rem',
+    searchError: {
+        marginTop: '0.5rem',
+        fontSize: '0.85rem',
+        color: 'rgba(255,220,100,0.95)',
         textAlign: 'center',
-        fontSize: '0.9rem',
     },
-
-    /* ── Texte ── */
     heroTitle: {
         fontSize: '2.75rem',
         fontWeight: '800',

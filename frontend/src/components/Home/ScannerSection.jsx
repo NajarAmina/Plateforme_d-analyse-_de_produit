@@ -38,7 +38,7 @@ const ScannerSection = ({ barcode, setBarcode, handleBarcodeScan, scannedProduct
                                     onChange={(e) => setBarcode(e.target.value)}
                                     onFocus={() => setFocused(true)}
                                     onBlur={() => setFocused(false)}
-                                    placeholder="Scannez ou tapez un code-barres..."
+                                    placeholder="Tapez le code-barre de votre produit"
                                     style={styles.input}
                                 />
                                 <button

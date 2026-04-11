@@ -1,8 +1,77 @@
 const Analyse = require('../models/analyse.model');
+const Produit = require('../models/produit.model');
+const Ingredient = require('../models/ingredient.model');
 const { spawn } = require('child_process');
 const path = require('path');
 
-// ─── CREATE ─────────────────────────────────────────────────────────────────
+// ─── Utilitaire : appel Python predictor ─────────────────────────────────────
+
+const callPredictor = (payload) => {
+    return new Promise((resolve, reject) => {
+        const scriptPath = path.join(__dirname, '..', 'predictor.py');
+        const pythonBin = process.env.PYTHON_BIN || 'python';
+
+        const py = spawn(pythonBin, [scriptPath]);
+        let stdout = '';
+        let stderr = '';
+
+        py.stdin.write(JSON.stringify(payload));
+        py.stdin.end();
+
+        py.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+        py.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+        py.on('close', (code) => {
+            if (code !== 0 && !stdout) {
+                return reject(new Error(stderr.slice(0, 300)));
+            }
+            try {
+                const jsonStart = stdout.indexOf('{');
+                const clean = jsonStart !== -1 ? stdout.slice(jsonStart) : stdout;
+                const result = JSON.parse(clean.trim());
+                if (result.error) return reject(new Error(result.error));
+                resolve(result);
+            } catch (e) {
+                reject(new Error('Réponse Python non-JSON : ' + stdout.slice(0, 200)));
+            }
+        });
+
+        py.on('error', (err) => reject(err));
+    });
+};
+
+// ─── Utilitaire : construire le payload pour le predictor ────────────────────
+
+const buildPayload = (product) => {
+    const ingredients = product.ingredients || [];
+    return {
+        nb_ingredients: ingredients.length,
+        ingredients_text: product.description || product.nom || '',
+        contains_preservatives: ingredients.some(i =>
+            typeof i === 'object'
+                ? (i.nom || '').toLowerCase().includes('conserv')
+                : false
+        ) ? 1 : 0,
+        contains_artificial_colors: ingredients.some(i =>
+            typeof i === 'object'
+                ? (i.nom || '').toLowerCase().includes('coloran')
+                : false
+        ) ? 1 : 0,
+        contains_flavouring: ingredients.some(i =>
+            typeof i === 'object'
+                ? (i.nom || '').toLowerCase().includes('arôm')
+                : false
+        ) ? 1 : 0,
+        nova_group: product.nova_group || 3,
+        nutriscore_num: product.nutriscore || 0,
+        nb_e_numbers: ingredients.filter(i =>
+            typeof i === 'object' && (i.nom || '').match(/E\d{3}/i)
+        ).length,
+        ingredients_length: ingredients.length
+    };
+};
+
+// ─── CREATE ──────────────────────────────────────────────────────────────────
 
 exports.createAnalyse = async (req, res) => {
     try {
@@ -69,63 +138,158 @@ exports.deleteAnalyse = async (req, res) => {
 };
 
 // ─── PREDICT (pipeline Python ML) ────────────────────────────────────────────
-// Appelé par POST /api/analyses/predict  ← Sandbox du composant AiAnalysisTab
+// POST /api/analyses/predict  ← utilisé par ScannerSection / AiAnalysisTab
 
-exports.predictIngredients = (req, res) => {
-    const payload = JSON.stringify(req.body);
+exports.predictIngredients = async (req, res) => {
+    try {
+        const result = await callPredictor(req.body);
+        return res.status(200).json(result);
+    } catch (err) {
+        console.error('[predictIngredients error]', err.message);
+        return res.status(500).json({ message: err.message });
+    }
+};
 
-    // Chemin vers votre script Python (predictor.py à la racine du backend)
-    const scriptPath = path.join(__dirname, '..', 'predictor.py');
-    const pythonBin = process.env.PYTHON_BIN || 'python';
+// Alias pour compatibilité
+exports.predictProduct = exports.predictIngredients;
 
-    const py = spawn(pythonBin, [scriptPath]);
+// ─── SEARCH BY PRODUCT NAME ──────────────────────────────────────────────────
+// GET /api/analyses/search/produit?q=nom_du_produit
 
-    let stdout = '';
-    let stderr = '';
+exports.searchByProductName = async (req, res) => {
+    try {
+        const query = (req.query.q || '').trim();
+        if (!query) {
+            return res.status(400).json({ message: 'Paramètre q (nom du produit) requis' });
+        }
 
-    py.stdin.write(payload);
-    py.stdin.end();
+        const products = await Produit.find({
+            status: 'approved',
+            nom: { $regex: query, $options: 'i' }
+        }).populate('ingredients');
 
-    py.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    py.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        if (!products.length) {
+            return res.status(404).json({ message: 'Aucun produit trouvé', results: [] });
+        }
 
-    py.on('close', (code) => {
-        // stderr peut contenir des warnings sklearn/pandas sans être une vraie erreur
-        if (code !== 0 && !stdout) {
-            console.error('[Python stderr]', stderr);
-            return res.status(500).json({
-                message: 'Erreur dans le script Python',
-                detail: stderr.slice(0, 300),
+        const enriched = await Promise.all(
+            products.map(async (product) => {
+                try {
+                    const payload = buildPayload(product.toObject());
+                    const aiResult = await callPredictor(payload);
+                    return {
+                        ...product.toObject(),
+                        ai_predictions: aiResult.predictions || {}
+                    };
+                } catch {
+                    return { ...product.toObject(), ai_predictions: {} };
+                }
+            })
+        );
+
+        return res.status(200).json({ results: enriched, total: enriched.length });
+    } catch (error) {
+        console.error('[searchByProductName error]', error.message);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// ─── SEARCH BY INGREDIENT NAME ───────────────────────────────────────────────
+// GET /api/analyses/search/ingredient?q=nom_ingredient
+
+exports.searchByIngredientName = async (req, res) => {
+    try {
+        const query = (req.query.q || '').trim();
+        if (!query) {
+            return res.status(400).json({ message: 'Paramètre q (nom ingrédient) requis' });
+        }
+
+        // 1. Trouver les ingrédients dont le nom correspond
+        const ingredients = await Ingredient.find({
+            nom: { $regex: query, $options: 'i' }
+        });
+
+        if (!ingredients.length) {
+            return res.status(404).json({
+                message: 'Aucun ingrédient trouvé',
+                results: []
             });
+        }
+
+        const ingredientIds = ingredients.map((i) => i._id);
+
+        // 2. Trouver les produits dont le tableau ingredients contient
+        //    au moins un des ObjectId trouvés ci-dessus
+        //    $elemMatch + $in sur un tableau de références ObjectId
+        const products = await Produit.find({
+            status: 'approved',
+            ingredients: { $elemMatch: { $in: ingredientIds } }
+        }).populate('ingredients');
+
+        if (!products.length) {
+            return res.status(404).json({
+                message: 'Aucun produit contenant cet ingrédient',
+                results: []
+            });
+        }
+
+        // 3. Enrichir chaque produit avec les prédictions IA
+        const enriched = await Promise.all(
+            products.map(async (product) => {
+                try {
+                    const payload = buildPayload(product.toObject());
+                    const aiResult = await callPredictor(payload);
+                    return {
+                        ...product.toObject(),
+                        ai_predictions: aiResult.predictions || {}
+                    };
+                } catch {
+                    return { ...product.toObject(), ai_predictions: {} };
+                }
+            })
+        );
+
+        return res.status(200).json({ results: enriched, total: enriched.length });
+    } catch (error) {
+        console.error('[searchByIngredientName error]', error.message);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// ─── SEARCH BY BARCODE ───────────────────────────────────────────────────────
+// GET /api/analyses/search/barcode?q=code_barre
+
+exports.searchByBarcode = async (req, res) => {
+    try {
+        const query = (req.query.q || '').trim();
+        if (!query) {
+            return res.status(400).json({ message: 'Paramètre q (code-barres) requis' });
+        }
+
+        const product = await Produit.findOne({
+            $or: [{ code_barre: query }, { codeBarres: query }]
+        }).populate('ingredients');
+
+        if (!product) {
+            return res.status(404).json({ message: 'Produit non trouvé', results: [] });
         }
 
         try {
-            // Nettoyage au cas où pandas affiche des warnings avant le JSON
-            const jsonStart = stdout.indexOf('{');
-            const clean = jsonStart !== -1 ? stdout.slice(jsonStart) : stdout;
-            const result = JSON.parse(clean.trim());
-
-            if (result.error) {
-                return res.status(500).json({ message: result.error });
-            }
-
-            return res.status(200).json(result);
-        } catch (e) {
-            console.error('[JSON parse error]', stdout);
-            return res.status(500).json({
-                message: 'Réponse Python non-JSON',
-                raw: stdout.slice(0, 300),
+            const payload = buildPayload(product.toObject());
+            const aiResult = await callPredictor(payload);
+            const enriched = {
+                ...product.toObject(),
+                ai_predictions: aiResult.predictions || {}
+            };
+            return res.status(200).json({ results: [enriched], total: 1 });
+        } catch {
+            return res.status(200).json({
+                results: [{ ...product.toObject(), ai_predictions: {} }],
+                total: 1
             });
         }
-    });
-
-    py.on('error', (err) => {
-        console.error('[spawn error]', err);
-        return res.status(500).json({
-            message: `Impossible de lancer Python : ${err.message}`,
-        });
-    });
+    } catch (error) {
+        console.error('[searchByBarcode error]', error.message);
+        res.status(500).json({ message: error.message });
+    }
 };
-
-// Alias pour compatibilité avec l'ancienne route /predict
-exports.predictProduct = exports.predictIngredients;
